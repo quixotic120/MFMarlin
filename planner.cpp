@@ -576,6 +576,12 @@ float junction_deviation = 0.1;
     block->e_to_p_pressure = EtoPPressure;
   #endif
 
+   // For a mixing extruder, get steps for each
+  #if ENABLED(MIXING_EXTRUDER_FEATURE)
+    for (uint8_t i = 0; i < MIXING_STEPPERS; i++)
+      block->mix_event_count[i] = block->step_event_count / mixing_factor[i];
+  #endif
+ 
   // Compute direction bits for this block
   uint8_t db = 0;
   #if ENABLED(COREXY)

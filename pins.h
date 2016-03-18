@@ -5,21 +5,6 @@
 #ifndef PINS_H
 #define PINS_H
 
-// Preset optional pins
-#define X_MS1_PIN -1
-#define X_MS2_PIN -1
-#define Y_MS1_PIN -1
-#define Y_MS2_PIN -1
-#define Z_MS1_PIN -1
-#define Z_MS2_PIN -1
-#define E0_MS1_PIN -1
-#define E0_MS2_PIN -1
-#define E1_MS1_PIN -1
-#define E1_MS2_PIN -1
-#define DIGIPOTSS_PIN -1
-#define HEATER_3_PIN -1
-#define TEMP_3_PIN -1
-
 #if MB(GEN7_CUSTOM)
   #include "pins_GEN7_CUSTOM.h"
 #elif MB(GEN7_12)
@@ -132,26 +117,75 @@
   #error Unknown MOTHERBOARD value set in Configuration.h
 #endif
 
+// Preset optional pins
+#ifndef X_MS1_PIN
+  #define X_MS1_PIN -1
+#endif
+#ifndef X_MS2_PIN
+  #define X_MS2_PIN -1
+#endif
+#ifndef Y_MS1_PIN
+  #define Y_MS1_PIN -1
+#endif
+#ifndef Y_MS2_PIN
+  #define Y_MS2_PIN -1
+#endif
+#ifndef Z_MS1_PIN
+  #define Z_MS1_PIN -1
+#endif
+#ifndef Z_MS2_PIN
+  #define Z_MS2_PIN -1
+#endif
+#ifndef E0_MS1_PIN
+  #define E0_MS1_PIN -1
+#endif
+#ifndef E0_MS2_PIN
+  #define E0_MS2_PIN -1
+#endif
+#ifndef E1_MS1_PIN
+  #define E1_MS1_PIN -1
+#endif
+#ifndef E1_MS2_PIN
+  #define E1_MS2_PIN -1
+#endif
+#ifndef DIGIPOTSS_PIN
+  #define DIGIPOTSS_PIN -1
+#endif
+#ifndef HEATER_3_PIN
+  #define HEATER_3_PIN -1
+#endif
+#ifndef TEMP_3_PIN
+  #define TEMP_3_PIN -1
+#endif
+
 // List of pins which to ignore when asked to change by gcode, 0 and 1 are RX and TX, do not mess with those!
 #define _E0_PINS E0_STEP_PIN, E0_DIR_PIN, E0_ENABLE_PIN, HEATER_0_PIN, analogInputToDigitalPin(TEMP_0_PIN),
-#define _E1_PINS
-#define _E2_PINS
-#define _E3_PINS
-
 #if EXTRUDERS > 1
-  #undef _E1_PINS
   #define _E1_PINS E1_STEP_PIN, E1_DIR_PIN, E1_ENABLE_PIN, HEATER_1_PIN, analogInputToDigitalPin(TEMP_1_PIN),
-  #if EXTRUDERS > 2
-    #undef _E2_PINS
-    #define _E2_PINS E2_STEP_PIN, E2_DIR_PIN, E2_ENABLE_PIN, HEATER_2_PIN, analogInputToDigitalPin(TEMP_2_PIN),
-    #if EXTRUDERS > 3
-      #undef _E3_PINS
-      #define _E3_PINS E3_STEP_PIN, E3_DIR_PIN, E3_ENABLE_PIN, HEATER_3_PIN, analogInputToDigitalPin(TEMP_3_PIN),
+#elif ENABLED(MIXING_EXTRUDER_FEATURE)
+  #define _E1_PINS E1_STEP_PIN, E1_DIR_PIN, E1_ENABLE_PIN,
+  #if MIXING_STEPPERS > 2
+    #define _E2_PINS E2_STEP_PIN, E2_DIR_PIN, E2_ENABLE_PIN,
+    #if MIXING_STEPPERS > 3
+      #define _E3_PINS E3_STEP_PIN, E3_DIR_PIN, E3_ENABLE_PIN,
     #endif
   #endif
 #elif ENABLED(Y_DUAL_STEPPER_DRIVERS) || ENABLED(Z_DUAL_STEPPER_DRIVERS)
-  #undef _E1_PINS
   #define _E1_PINS E1_STEP_PIN, E1_DIR_PIN, E1_ENABLE_PIN,
+#else
+  #define _E1_PINS
+#endif
+
+#if EXTRUDERS > 2
+  #define _E2_PINS E2_STEP_PIN, E2_DIR_PIN, E2_ENABLE_PIN, HEATER_2_PIN, analogInputToDigitalPin(TEMP_2_PIN),
+#else
+  #define _E2_PINS
+#endif
+
+#if EXTRUDERS > 3
+  #define _E3_PINS E3_STEP_PIN, E3_DIR_PIN, E3_ENABLE_PIN, HEATER_3_PIN, analogInputToDigitalPin(TEMP_3_PIN),
+#else
+  #define _E3_PINS
 #endif
 
 #ifdef X_STOP_PIN
@@ -260,4 +294,3 @@
 #define HAS_DIGIPOTSS (DIGIPOTSS_PIN >= 0)
 
 #endif //__PINS_H
-

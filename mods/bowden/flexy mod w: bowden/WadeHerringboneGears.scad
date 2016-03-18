@@ -125,7 +125,7 @@ gear2_shaft_diameter = 8 + 0.2;
  *   Y: 15.7mm
  *
  */
-gear2_shaft_height = 9.5;
+gear2_shaft_height = 15.7;
 
 /* Diameter of shaft holder */
 gear2_middle_diameter = 25;

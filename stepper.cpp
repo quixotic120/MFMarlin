@@ -62,7 +62,11 @@ volatile static unsigned long step_events_completed; // The number of step event
 #if ENABLED(ADVANCE)
   static long advance_rate, advance, final_advance = 0;
   static long old_advance = 0;
-  static long e_steps[4];
+  #if ENABLED(MIXING_EXTRUDER_FEATURE)
+    static long e_steps[MIXING_STEPPERS];
+  #else
+    static long e_steps[EXTRUDERS];
+  #endif
 #endif
 
 static long acceleration_time, deceleration_time;
@@ -96,7 +100,10 @@ static bool check_endstops = true;
 volatile long count_position[NUM_AXIS] = { 0 };
 volatile signed char count_direction[NUM_AXIS] = { 1, 1, 1, 1 };
 
-
+#if ENABLED(MIXING_EXTRUDER_FEATURE)
+  static long counter_m[MIXING_STEPPERS];
+#endif
+ 
 //===========================================================================
 //================================ functions ================================
 //===========================================================================
@@ -157,7 +164,9 @@ volatile signed char count_direction[NUM_AXIS] = { 1, 1, 1, 1 };
   #define Z_APPLY_STEP(v,Q) Z_STEP_WRITE(v)
 #endif
 
-#define E_APPLY_STEP(v,Q) E_STEP_WRITE(v)
+#if DISABLED(MIXING_EXTRUDER_FEATURE)
+  #define E_APPLY_STEP(v,Q) E_STEP_WRITE(v)
+#endif
 
 // intRes = intIn1 * intIn2 >> 16
 // uses:
@@ -573,8 +582,14 @@ FORCE_INLINE void trapezoid_generator_reset() {
     advance = current_block->initial_advance;
     final_advance = current_block->final_advance;
     // Do E steps + advance steps
-    e_steps[current_block->active_extruder] += ((advance >>8) - old_advance);
-    old_advance = advance >>8;
+  #if ENABLED(MIXING_EXTRUDER_FEATURE)
+      // Move mixing steppers proportionally
+      for (uint8_t j = 0; j < MIXING_STEPPERS; j++)
+        e_steps[j] += ((advance >> 8) - old_advance) * current_block->step_event_count / current_block->mix_event_count[j];
+    #else
+      e_steps[current_block->active_extruder] += ((advance >> 8) - old_advance);
+    #endif
+    old_advance = advance >> 8;
   #endif
   deceleration_time = 0;
   // step_rate to timer interval
@@ -618,8 +633,16 @@ ISR(TIMER1_COMPA_vect) {
     if (current_block) {
       current_block->busy = true;
       trapezoid_generator_reset();
-      counter_x = -(current_block->step_event_count >> 1);
-      counter_y = counter_z = counter_e = counter_x;
+
+      // Initialize Bresenham counters to 1/2 the ceiling
+      long new_count = -(current_block->step_event_count >> 1);
+      counter_x = counter_y = counter_z = counter_e = new_count;
+
+      #if ENABLED(MIXING_EXTRUDER_FEATURE)
+        for (uint8_t i = 0; i < MIXING_STEPPERS; i++)
+          counter_m[i] = -(current_block->mix_event_count[i] >> 1);
+      #endif
+
       step_events_completed = 0;
 
       #if ENABLED(Z_LATE_ENABLE)
@@ -651,11 +674,28 @@ ISR(TIMER1_COMPA_vect) {
       #endif
 
       #if ENABLED(ADVANCE)
+        // Always count the unified E axis
         counter_e += current_block->steps[E_AXIS];
         if (counter_e > 0) {
           counter_e -= current_block->step_event_count;
-          e_steps[current_block->active_extruder] += TEST(out_bits, E_AXIS) ? -1 : 1;
+        #if DISABLED(MIXING_EXTRUDER_FEATURE)
+            // Don't step E for mixing extruder
+            e_steps[current_block->active_extruder] += TEST(out_bits, E_AXIS) ? -1 : 1;
+          #endif
         }
+        #if ENABLED(MIXING_EXTRUDER_FEATURE)
+
+          long dir = TEST(out_bits, E_AXIS) ? -1 : 1;
+          for (uint8_t j = 0; j < MIXING_STEPPERS; j++) {
+            counter_m[j] += current_block->steps[E_AXIS];
+            if (counter_m[j] > 0) {
+              counter_m[j] -= current_block->mix_event_count[j];
+              e_steps[j] += dir;
+            }
+          }
+
+        #endif //!MIXING_EXTRUDER_FEATURE
+
       #endif //ADVANCE
 
       #define _COUNTER(axis) counter_## axis
@@ -670,7 +710,15 @@ ISR(TIMER1_COMPA_vect) {
       STEP_ADD(y,Y);
       STEP_ADD(z,Z);
       #if DISABLED(ADVANCE)
-        STEP_ADD(e,E);
+        #if ENABLED(MIXING_EXTRUDER_FEATURE)
+          counter_e += current_block->steps[E_AXIS];
+          for (uint8_t j = 0; j < MIXING_STEPPERS; j++) {
+            counter_m[j] += current_block->steps[E_AXIS];
+            if (counter_m[j] > 0) En_STEP_WRITE(j, !INVERT_E_STEP_PIN);
+          }
+        #else
+          STEP_ADD(e,E);
+        #endif
       #endif
 
       #define STEP_IF_COUNTER(axis, AXIS) \
@@ -684,8 +732,22 @@ ISR(TIMER1_COMPA_vect) {
       STEP_IF_COUNTER(y, Y);
       STEP_IF_COUNTER(z, Z);
       #if DISABLED(ADVANCE)
-        STEP_IF_COUNTER(e, E);
-      #endif
+   #if ENABLED(MIXING_EXTRUDER_FEATURE)
+         // Always count the single E axis
+          if (counter_e > 0) {
+            counter_e -= current_block->step_event_count;
+            count_position[E_AXIS] += count_direction[E_AXIS];
+          }
+          for (uint8_t j = 0; j < MIXING_STEPPERS; j++) {
+            if (counter_m[j] > 0) { // general idea... do this 4 times
+              counter_m[j] -= current_block->step_event_count;
+              En_STEP_WRITE(j, INVERT_E_STEP_PIN);
+            }
+          }
+        #else
+          STEP_IF_COUNTER(e, E);
+       #endif
+ #endif
 
       step_events_completed++;
       if (step_events_completed >= current_block->step_event_count) break;
@@ -714,7 +776,14 @@ ISR(TIMER1_COMPA_vect) {
         }
         //if (advance > current_block->advance) advance = current_block->advance;
         // Do E steps + advance steps
-        e_steps[current_block->active_extruder] += ((advance >> 8) - old_advance);
+        #if ENABLED(MIXING_EXTRUDER_FEATURE)
+          // Move mixing steppers proportionally
+          for (uint8_t j = 0; j < MIXING_STEPPERS; j++)
+            e_steps[j] += ((advance >> 8) - old_advance) * current_block->step_event_count / current_block->mix_event_count[j];
+        #else
+          e_steps[current_block->active_extruder] += ((advance >> 8) - old_advance);
+        #endif
+ 
         old_advance = advance >> 8;
 
       #endif //ADVANCE
@@ -743,8 +812,15 @@ ISR(TIMER1_COMPA_vect) {
         }
         if (advance < final_advance) advance = final_advance;
         // Do E steps + advance steps
-        e_steps[current_block->active_extruder] += ((advance >> 8) - old_advance);
-        old_advance = advance >> 8;
+         uint32_t advance_whole = advance >> 8;
+         #if ENABLED(MIXING_EXTRUDER_FEATURE)
+          for (uint8_t j = 0; j < MIXING_STEPPERS; j++)
+            e_steps[current_block->active_extruder] += (advance_whole - old_advance) * current_block->mix_factor[j];
+        #else
+          e_steps[current_block->active_extruder] += advance_whole - old_advance;
+        #endif
+
+        old_advance = advance_whole;
       #endif //ADVANCE
     }
     else {

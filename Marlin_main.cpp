@@ -68,13 +68,16 @@
   #include <SPI.h>
 #endif
 
+// The external gCode implementations
+//#include "gCodes.h"
+
 /**
  * Look here for descriptions of G-codes:
  *  - http://linuxcnc.org/handbook/gcode/g-code.html
  *  - http://objects.reprap.org/wiki/Mendel_User_Manual:_RepRapGCodes
  *
  * Help us document these G-codes online:
- *  - http://marlinfirmware.org/index.php/G-Code
+ *  - https://github.com/MarlinFirmware/MarlinDev/wiki/G-Code-in-Marlin
  *  - http://reprap.org/wiki/G-code
  *
  * -----------------
@@ -155,6 +158,9 @@
  * M140 - Set bed target temp
  * M145 - Set the heatup state H<hotend> B<bed> F<fan speed> for S<material> (0=PLA, 1=ABS)
  * M150 - Set BlinkM Color Output R: Red<0-255> U(!): Green<0-255> B: Blue<0-255> over i2c, G for green does not work.
+ * M163 - Set a single proportion for a mixing extruder. Requires MIXING_EXTRUDER_FEATURE.
+ * M164 - Save the mix as a virtual extruder. Requires MIXING_EXTRUDER_FEATURE and MIXING_VIRTUAL_TOOLS.
+ * M165 - Set the proportions for a mixing extruder. Use parameters ABCDHI to set the mixing factors. Requires MIXING_EXTRUDER_FEATURE.
  * M190 - Sxxx Wait for bed current temp to reach target temp. Waits only when heating
  *        Rxxx Wait for bed current temp to reach target temp. Waits when heating and cooling
  * M200 - set filament diameter and set E axis units to cubic millimeters (use S0 to set back to millimeters).:D<millimeters>-
@@ -288,7 +294,6 @@ static millis_t stepper_inactive_time = DEFAULT_STEPPER_DEACTIVE_TIME * 1000L;
 millis_t print_job_start_ms = 0; ///< Print job start time
 millis_t print_job_stop_ms = 0;  ///< Print job stop time
 static uint8_t target_extruder;
-bool no_wait_for_cooling = true;
 bool target_direction;
 
 #if ENABLED(AUTO_BED_LEVELING_FEATURE)
@@ -408,6 +413,13 @@ bool target_direction;
 
 #if ENABLED(FILAMENT_RUNOUT_SENSOR)
   static bool filrunoutEnqueued = false;
+#endif
+
+#if ENABLED(MIXING_EXTRUDER_FEATURE)
+  float mixing_factor[MIXING_STEPPERS];
+  #if MIXING_VIRTUAL_TOOLS > 1
+    float mixing_virtual_tool_mix[MIXING_VIRTUAL_TOOLS][MIXING_STEPPERS];
+  #endif
 #endif
 
 #if ENABLED(SDSUPPORT)
@@ -721,6 +733,15 @@ void setup() {
     pinMode(STAT_LED_BLUE, OUTPUT);
     digitalWrite(STAT_LED_BLUE, LOW); // turn it off
   #endif
+
+  #if ENABLED(MIXING_EXTRUDER_FEATURE) && MIXING_VIRTUAL_TOOLS > 1
+    // Initialize mixing to 100% color 1
+    for (uint8_t i = 0; i < MIXING_STEPPERS; i++)
+      mixing_factor[i] = (i == 0) ? 1 : 0;
+    for (uint8_t t = 0; t < MIXING_VIRTUAL_TOOLS; t++)
+      for (uint8_t i = 0; i < MIXING_STEPPERS; i++)
+        mixing_virtual_tool_mix[t][i] = mixing_factor[i];
+  #endif
 }
 
 /**
@@ -974,6 +995,7 @@ void get_command() {
 bool code_has_value() {
   int i = 1;
   char c = seen_pointer[i];
+  while (c == ' ') c = seen_pointer[++i];
   if (c == '-' || c == '+') c = seen_pointer[++i];
   if (c == '.') c = seen_pointer[++i];
   return (c >= '0' && c <= '9');
@@ -2084,6 +2106,37 @@ static void homeaxis(AxisEnum axis) {
 
 #endif // FWRETRACT
 
+#if ENABLED(MIXING_EXTRUDER_FEATURE)
+
+  void normalize_mix() {
+    float mix_total = 0.0;
+    for (int i = 0; i < MIXING_STEPPERS; i++) {
+      float v = mixing_factor[i];
+      if (v < 0) v = mixing_factor[i] = 0;
+      mix_total += v;
+    }
+    // Scale all values if they don't add up to ~1.0
+    if (mix_total < 0.9999 || mix_total > 1.0001) {
+      SERIAL_PROTOCOLLNPGM("Warning: Mix factors must add up to 1.0. Scaling.");
+      float mix_scale = 1.0 / mix_total;
+      for (int i = 0; i < MIXING_STEPPERS; i++)
+        mixing_factor[i] *= mix_scale;
+    }
+  }
+
+  // Get mixing parameters from the GCode
+  // Factors that are left out are set to 0
+  // The total "must" be 1.0 (but it will be normalized)
+  void gcode_get_mix() {
+    const char* mixing_codes = "ABCDHI";
+    for (int i = 0; i < MIXING_STEPPERS; i++)
+      mixing_factor[i] = code_seen(mixing_codes[i]) ? code_value() : 0;
+
+    normalize_mix();
+  }
+
+#endif
+
 /**
  *
  * G-Code Handler functions
@@ -2108,6 +2161,11 @@ void gcode_get_destination() {
     float next_feedrate = code_value();
     if (next_feedrate > 0.0) feedrate = next_feedrate;
   }
+
+  // Get ABCDHI mixing factors
+  #if ENABLED(MIXING_EXTRUDER_FEATURE)
+    gcode_get_mix();
+  #endif
 }
 
 void unknown_command_error() {
@@ -3803,14 +3861,9 @@ inline void gcode_M104() {
   }
 }
 
-/**
- * M105: Read hot end and bed temperature
- */
-inline void gcode_M105() {
-  if (setTargetedHotend(105)) return;
+#if HAS_TEMP_0 || HAS_TEMP_BED || ENABLED(HEATER_0_USES_MAX6675)
 
-  #if HAS_TEMP_0 || HAS_TEMP_BED || ENABLED(HEATER_0_USES_MAX6675)
-    SERIAL_PROTOCOLPGM(MSG_OK);
+  void print_heaterstates() {
     #if HAS_TEMP_0 || ENABLED(HEATER_0_USES_MAX6675)
       SERIAL_PROTOCOLPGM(" T:");
       SERIAL_PROTOCOL_F(degHotend(target_extruder), 1);
@@ -3823,50 +3876,76 @@ inline void gcode_M105() {
       SERIAL_PROTOCOLPGM(" /");
       SERIAL_PROTOCOL_F(degTargetBed(), 1);
     #endif
-    for (int8_t e = 0; e < EXTRUDERS; ++e) {
-      SERIAL_PROTOCOLPGM(" T");
-      SERIAL_PROTOCOL(e);
-      SERIAL_PROTOCOLCHAR(':');
-      SERIAL_PROTOCOL_F(degHotend(e), 1);
-      SERIAL_PROTOCOLPGM(" /");
-      SERIAL_PROTOCOL_F(degTargetHotend(e), 1);
-    }
+    #if EXTRUDERS > 1
+      for (int8_t e = 0; e < EXTRUDERS; ++e) {
+        SERIAL_PROTOCOLPGM(" T");
+        SERIAL_PROTOCOL(e);
+        SERIAL_PROTOCOLCHAR(':');
+        SERIAL_PROTOCOL_F(degHotend(e), 1);
+        SERIAL_PROTOCOLPGM(" /");
+        SERIAL_PROTOCOL_F(degTargetHotend(e), 1);
+      }
+    #endif
+    #if HAS_TEMP_BED
+      SERIAL_PROTOCOLPGM(" B@:");
+      #ifdef BED_WATTS
+        SERIAL_PROTOCOL((BED_WATTS * getHeaterPower(-1)) / 127);
+        SERIAL_PROTOCOLCHAR('W');
+      #else
+        SERIAL_PROTOCOL(getHeaterPower(-1));
+      #endif
+    #endif
+    SERIAL_PROTOCOLPGM(" @:");
+    #ifdef EXTRUDER_WATTS
+      SERIAL_PROTOCOL((EXTRUDER_WATTS * getHeaterPower(target_extruder)) / 127);
+      SERIAL_PROTOCOLCHAR('W');
+    #else
+      SERIAL_PROTOCOL(getHeaterPower(target_extruder));
+    #endif
+    #if EXTRUDERS > 1
+      for (int8_t e = 0; e < EXTRUDERS; ++e) {
+        SERIAL_PROTOCOLPGM(" @");
+        SERIAL_PROTOCOL(e);
+        SERIAL_PROTOCOLCHAR(':');
+        #ifdef EXTRUDER_WATTS
+          SERIAL_PROTOCOL((EXTRUDER_WATTS * getHeaterPower(e)) / 127);
+          SERIAL_PROTOCOLCHAR('W');
+        #else
+          SERIAL_PROTOCOL(getHeaterPower(e));
+        #endif
+      }
+    #endif
+    #if ENABLED(SHOW_TEMP_ADC_VALUES)
+      #if HAS_TEMP_BED
+        SERIAL_PROTOCOLPGM("    ADC B:");
+        SERIAL_PROTOCOL_F(degBed(), 1);
+        SERIAL_PROTOCOLPGM("C->");
+        SERIAL_PROTOCOL_F(rawBedTemp() / OVERSAMPLENR, 0);
+      #endif
+      for (int8_t cur_extruder = 0; cur_extruder < EXTRUDERS; ++cur_extruder) {
+        SERIAL_PROTOCOLPGM("  T");
+        SERIAL_PROTOCOL(cur_extruder);
+        SERIAL_PROTOCOLCHAR(':');
+        SERIAL_PROTOCOL_F(degHotend(cur_extruder), 1);
+        SERIAL_PROTOCOLPGM("C->");
+        SERIAL_PROTOCOL_F(rawHotendTemp(cur_extruder) / OVERSAMPLENR, 0);
+      }
+    #endif
+  }
+#endif
+
+/**
+ * M105: Read hot end and bed temperature
+ */
+inline void gcode_M105() {
+  if (setTargetedHotend(105)) return;
+
+  #if HAS_TEMP_0 || HAS_TEMP_BED || ENABLED(HEATER_0_USES_MAX6675)
+    SERIAL_PROTOCOLPGM(MSG_OK);
+    print_heaterstates();
   #else // !HAS_TEMP_0 && !HAS_TEMP_BED
     SERIAL_ERROR_START;
     SERIAL_ERRORLNPGM(MSG_ERR_NO_THERMISTORS);
-  #endif
-
-  SERIAL_PROTOCOLPGM(" @:");
-  #ifdef EXTRUDER_WATTS
-    SERIAL_PROTOCOL((EXTRUDER_WATTS * getHeaterPower(target_extruder)) / 127);
-    SERIAL_PROTOCOLCHAR('W');
-  #else
-    SERIAL_PROTOCOL(getHeaterPower(target_extruder));
-  #endif
-
-  SERIAL_PROTOCOLPGM(" B@:");
-  #ifdef BED_WATTS
-    SERIAL_PROTOCOL((BED_WATTS * getHeaterPower(-1)) / 127);
-    SERIAL_PROTOCOLCHAR('W');
-  #else
-    SERIAL_PROTOCOL(getHeaterPower(-1));
-  #endif
-
-  #if ENABLED(SHOW_TEMP_ADC_VALUES)
-    #if HAS_TEMP_BED
-      SERIAL_PROTOCOLPGM("    ADC B:");
-      SERIAL_PROTOCOL_F(degBed(), 1);
-      SERIAL_PROTOCOLPGM("C->");
-      SERIAL_PROTOCOL_F(rawBedTemp() / OVERSAMPLENR, 0);
-    #endif
-    for (int8_t cur_extruder = 0; cur_extruder < EXTRUDERS; ++cur_extruder) {
-      SERIAL_PROTOCOLPGM("  T");
-      SERIAL_PROTOCOL(cur_extruder);
-      SERIAL_PROTOCOLCHAR(':');
-      SERIAL_PROTOCOL_F(degHotend(cur_extruder), 1);
-      SERIAL_PROTOCOLPGM("C->");
-      SERIAL_PROTOCOL_F(rawHotendTemp(cur_extruder) / OVERSAMPLENR, 0);
-    }
   #endif
 
   SERIAL_EOL;
@@ -3890,6 +3969,8 @@ inline void gcode_M105() {
  * M109: Wait for extruder(s) to reach temperature
  */
 inline void gcode_M109() {
+  bool no_wait_for_cooling = true;
+
   if (setTargetedHotend(109)) return;
   if (marlin_debug_flags & DEBUG_DRYRUN) return;
 
@@ -3931,10 +4012,9 @@ inline void gcode_M109() {
 
   { // while loop
     if (millis() > temp_ms + 1000UL) { //Print temp & remaining time every 1s while waiting
-      SERIAL_PROTOCOLPGM("T:");
-      SERIAL_PROTOCOL_F(degHotend(target_extruder), 1);
-      SERIAL_PROTOCOLPGM(" E:");
-      SERIAL_PROTOCOL((int)target_extruder);
+      #if HAS_TEMP_0 || HAS_TEMP_BED || ENABLED(HEATER_0_USES_MAX6675)
+        print_heaterstates();
+      #endif
       #ifdef TEMP_RESIDENCY_TIME
         SERIAL_PROTOCOLPGM(" W:");
         if (residency_start_ms > -1) {
@@ -3976,6 +4056,8 @@ inline void gcode_M109() {
    *       Rxxx Wait for bed current temp to reach target temp. Waits when heating and cooling
    */
   inline void gcode_M190() {
+    bool no_wait_for_cooling = true;
+
     if (marlin_debug_flags & DEBUG_DRYRUN) return;
 
     LCD_MESSAGEPGM(MSG_BED_HEATING);
@@ -3992,14 +4074,10 @@ inline void gcode_M109() {
       millis_t ms = millis();
       if (ms > temp_ms + 1000UL) { //Print Temp Reading every 1 second while heating up.
         temp_ms = ms;
-        float tt = degHotend(active_extruder);
-        SERIAL_PROTOCOLPGM("T:");
-        SERIAL_PROTOCOL(tt);
-        SERIAL_PROTOCOLPGM(" E:");
-        SERIAL_PROTOCOL((int)active_extruder);
-        SERIAL_PROTOCOLPGM(" B:");
-        SERIAL_PROTOCOL_F(degBed(), 1);
-        SERIAL_EOL;
+        #if HAS_TEMP_0 || HAS_TEMP_BED || ENABLED(HEATER_0_USES_MAX6675)
+          print_heaterstates();
+          SERIAL_EOL;
+        #endif
       }
       idle();
     }
@@ -4912,6 +4990,9 @@ inline void gcode_M303() {
   int e = code_seen('E') ? code_value_short() : 0;
   int c = code_seen('C') ? code_value_short() : 5;
   float temp = code_seen('S') ? code_value() : (e < 0 ? 70.0 : 150.0);
+
+  if (e >= 0 && e < EXTRUDERS) target_extruder = e;
+
   PID_autotune(temp, e, c);
 }
 
@@ -5539,6 +5620,58 @@ inline void gcode_M907() {
 
 #endif // HAS_MICROSTEPS
 
+#if ENABLED(MIXING_EXTRUDER_FEATURE)
+
+  /**
+   * M163: Set a single mix factor for a mixing extruder
+   *       This is called "weight" by some systems.
+   *
+   *   S[index]   The channel index to set
+   *   P[float]   The mix value
+   *
+   */
+  inline void gcode_M163() {
+    int mix_index = code_seen('S') ? code_value_short() : 0;
+    float mix_value = code_seen('P') ? code_value() : 0.0;
+    if (mix_index < MIXING_STEPPERS) mixing_factor[mix_index] = mix_value;
+  }
+
+  #if MIXING_VIRTUAL_TOOLS > 1
+
+    /**
+     * M164: Store the current mix factors as a virtual tool.
+     *
+     *   S[index]   The virtual tool to store
+     *
+     */
+    inline void gcode_M164() {
+      int tool_index = code_seen('S') ? code_value_short() : 0;
+      if (tool_index < MIXING_VIRTUAL_TOOLS) {
+        normalize_mix();
+        for (uint8_t i = 0; i < MIXING_STEPPERS; i++)
+          mixing_virtual_tool_mix[tool_index][i] = mixing_factor[i];
+      }
+    }
+
+  #endif
+
+  /**
+   * M165: Set multiple mix factors for a mixing extruder.
+   *       Factors that are left out will be set to 0.
+   *       All factors together must add up to 1.0.
+   *
+   *   A[factor] Mix factor for extruder stepper 1
+   *   B[factor] Mix factor for extruder stepper 2
+   *   C[factor] Mix factor for extruder stepper 3
+   *   D[factor] Mix factor for extruder stepper 4
+   *   H[factor] Mix factor for extruder stepper 5
+   *   I[factor] Mix factor for extruder stepper 6
+   *
+   */
+  inline void gcode_M165() { gcode_get_mix(); }
+
+#endif
+
 /**
  * M999: Restart after being stopped
  */
@@ -5555,105 +5688,124 @@ inline void gcode_M999() {
  *   F[mm/min] Set the movement feedrate
  */
 inline void gcode_T(uint8_t tmp_extruder) {
-  if (tmp_extruder >= EXTRUDERS) {
+
+  bool good_extruder = false;
+
+  #if ENABLED(MIXING_EXTRUDER_FEATURE) && MIXING_VIRTUAL_TOOLS > 1
+
+    // T0-T15: Switch virtual tool by changing the mix
+    if (tmp_extruder < MIXING_VIRTUAL_TOOLS) {
+      good_extruder = true;
+      for (uint8_t j = 0; j < MIXING_STEPPERS; j++)
+        mixing_factor[j] = mixing_virtual_tool_mix[tmp_extruder][j];
+    }
+
+  #else //!MIXING_EXTRUDER_FEATURE && MIXING_VIRTUAL_TOOLS
+
+    if (tmp_extruder < EXTRUDERS) {
+      good_extruder = true;
+      target_extruder = tmp_extruder;
+
+      #if EXTRUDERS > 1
+        bool make_move = false;
+      #endif
+
+      if (code_seen('F')) {
+
+        #if EXTRUDERS > 1
+          make_move = true;
+        #endif
+
+        float next_feedrate = code_value();
+        if (next_feedrate > 0.0) feedrate = next_feedrate;
+      }
+      #if EXTRUDERS > 1
+        if (tmp_extruder != active_extruder) {
+          // Save current position to return to after applying extruder offset
+          set_destination_to_current();
+          #if ENABLED(DUAL_X_CARRIAGE)
+            if (dual_x_carriage_mode == DXC_AUTO_PARK_MODE && IsRunning() &&
+                (delayed_move_time != 0 || current_position[X_AXIS] != x_home_pos(active_extruder))) {
+              // Park old head: 1) raise 2) move to park position 3) lower
+              plan_buffer_line(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS] + TOOLCHANGE_PARK_ZLIFT,
+                               current_position[E_AXIS], max_feedrate[Z_AXIS], active_extruder);
+              plan_buffer_line(x_home_pos(active_extruder), current_position[Y_AXIS], current_position[Z_AXIS] + TOOLCHANGE_PARK_ZLIFT,
+                               current_position[E_AXIS], max_feedrate[X_AXIS], active_extruder);
+              plan_buffer_line(x_home_pos(active_extruder), current_position[Y_AXIS], current_position[Z_AXIS],
+                               current_position[E_AXIS], max_feedrate[Z_AXIS], active_extruder);
+              st_synchronize();
+            }
+
+            // apply Y & Z extruder offset (x offset is already used in determining home pos)
+            current_position[Y_AXIS] = current_position[Y_AXIS] -
+                                       extruder_offset[Y_AXIS][active_extruder] +
+                                       extruder_offset[Y_AXIS][tmp_extruder];
+            current_position[Z_AXIS] = current_position[Z_AXIS] -
+                                       extruder_offset[Z_AXIS][active_extruder] +
+                                       extruder_offset[Z_AXIS][tmp_extruder];
+            active_extruder = tmp_extruder;
+
+            // This function resets the max/min values - the current position may be overwritten below.
+            set_axis_is_at_home(X_AXIS);
+
+            if (dual_x_carriage_mode == DXC_FULL_CONTROL_MODE) {
+              current_position[X_AXIS] = inactive_extruder_x_pos;
+              inactive_extruder_x_pos = destination[X_AXIS];
+            }
+            else if (dual_x_carriage_mode == DXC_DUPLICATION_MODE) {
+              active_extruder_parked = (active_extruder == 0); // this triggers the second extruder to move into the duplication position
+              if (active_extruder == 0 || active_extruder_parked)
+                current_position[X_AXIS] = inactive_extruder_x_pos;
+              else
+                current_position[X_AXIS] = destination[X_AXIS] + duplicate_extruder_x_offset;
+              inactive_extruder_x_pos = destination[X_AXIS];
+              extruder_duplication_enabled = false;
+            }
+            else {
+              // record raised toolhead position for use by unpark
+              memcpy(raised_parked_position, current_position, sizeof(raised_parked_position));
+              raised_parked_position[Z_AXIS] += TOOLCHANGE_UNPARK_ZLIFT;
+              active_extruder_parked = true;
+              delayed_move_time = 0;
+            }
+          #else // !DUAL_X_CARRIAGE
+            // Offset extruder (only by XY)
+            for (int i = X_AXIS; i <= Y_AXIS; i++)
+              current_position[i] += extruder_offset[i][tmp_extruder] - extruder_offset[i][active_extruder];
+            // Set the new active extruder and position
+            active_extruder = tmp_extruder;
+          #endif // !DUAL_X_CARRIAGE
+          #if ENABLED(DELTA)
+            sync_plan_position_delta();
+          #else
+            sync_plan_position();
+          #endif
+          // Move to the old position if 'F' was in the parameters
+          if (make_move && IsRunning()) prepare_move();
+        }
+
+        #if ENABLED(EXT_SOLENOID)
+          st_synchronize();
+          disable_all_solenoids();
+          enable_solenoid_on_active_extruder();
+        #endif // EXT_SOLENOID
+
+      #endif // EXTRUDERS > 1
+      SERIAL_ECHO_START;
+      SERIAL_ECHO(MSG_ACTIVE_EXTRUDER);
+      SERIAL_PROTOCOLLN((int)active_extruder);
+    }
+
+  #endif //!MIXING_EXTRUDER_FEATURE
+
+  if (!good_extruder) {
     SERIAL_ECHO_START;
     SERIAL_CHAR('T');
     SERIAL_PROTOCOL_F(tmp_extruder, DEC);
     SERIAL_ECHOLN(MSG_INVALID_EXTRUDER);
   }
-  else {
-    target_extruder = tmp_extruder;
 
-    #if EXTRUDERS > 1
-      bool make_move = false;
-    #endif
-
-    if (code_seen('F')) {
-
-      #if EXTRUDERS > 1
-        make_move = true;
-      #endif
-
-      float next_feedrate = code_value();
-      if (next_feedrate > 0.0) feedrate = next_feedrate;
-    }
-    #if EXTRUDERS > 1
-      if (tmp_extruder != active_extruder) {
-        // Save current position to return to after applying extruder offset
-        set_destination_to_current();
-        #if ENABLED(DUAL_X_CARRIAGE)
-          if (dual_x_carriage_mode == DXC_AUTO_PARK_MODE && IsRunning() &&
-              (delayed_move_time != 0 || current_position[X_AXIS] != x_home_pos(active_extruder))) {
-            // Park old head: 1) raise 2) move to park position 3) lower
-            plan_buffer_line(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS] + TOOLCHANGE_PARK_ZLIFT,
-                             current_position[E_AXIS], max_feedrate[Z_AXIS], active_extruder);
-            plan_buffer_line(x_home_pos(active_extruder), current_position[Y_AXIS], current_position[Z_AXIS] + TOOLCHANGE_PARK_ZLIFT,
-                             current_position[E_AXIS], max_feedrate[X_AXIS], active_extruder);
-            plan_buffer_line(x_home_pos(active_extruder), current_position[Y_AXIS], current_position[Z_AXIS],
-                             current_position[E_AXIS], max_feedrate[Z_AXIS], active_extruder);
-            st_synchronize();
-          }
-
-          // apply Y & Z extruder offset (x offset is already used in determining home pos)
-          current_position[Y_AXIS] = current_position[Y_AXIS] -
-                                     extruder_offset[Y_AXIS][active_extruder] +
-                                     extruder_offset[Y_AXIS][tmp_extruder];
-          current_position[Z_AXIS] = current_position[Z_AXIS] -
-                                     extruder_offset[Z_AXIS][active_extruder] +
-                                     extruder_offset[Z_AXIS][tmp_extruder];
-          active_extruder = tmp_extruder;
-
-          // This function resets the max/min values - the current position may be overwritten below.
-          set_axis_is_at_home(X_AXIS);
-
-          if (dual_x_carriage_mode == DXC_FULL_CONTROL_MODE) {
-            current_position[X_AXIS] = inactive_extruder_x_pos;
-            inactive_extruder_x_pos = destination[X_AXIS];
-          }
-          else if (dual_x_carriage_mode == DXC_DUPLICATION_MODE) {
-            active_extruder_parked = (active_extruder == 0); // this triggers the second extruder to move into the duplication position
-            if (active_extruder == 0 || active_extruder_parked)
-              current_position[X_AXIS] = inactive_extruder_x_pos;
-            else
-              current_position[X_AXIS] = destination[X_AXIS] + duplicate_extruder_x_offset;
-            inactive_extruder_x_pos = destination[X_AXIS];
-            extruder_duplication_enabled = false;
-          }
-          else {
-            // record raised toolhead position for use by unpark
-            memcpy(raised_parked_position, current_position, sizeof(raised_parked_position));
-            raised_parked_position[Z_AXIS] += TOOLCHANGE_UNPARK_ZLIFT;
-            active_extruder_parked = true;
-            delayed_move_time = 0;
-          }
-        #else // !DUAL_X_CARRIAGE
-          // Offset extruder (only by XY)
-          for (int i = X_AXIS; i <= Y_AXIS; i++)
-            current_position[i] += extruder_offset[i][tmp_extruder] - extruder_offset[i][active_extruder];
-          // Set the new active extruder and position
-          active_extruder = tmp_extruder;
-        #endif // !DUAL_X_CARRIAGE
-        #if ENABLED(DELTA)
-          sync_plan_position_delta();
-        #else
-          sync_plan_position();
-        #endif
-        // Move to the old position if 'F' was in the parameters
-        if (make_move && IsRunning()) prepare_move();
-      }
-
-      #if ENABLED(EXT_SOLENOID)
-        st_synchronize();
-        disable_all_solenoids();
-        enable_solenoid_on_active_extruder();
-      #endif // EXT_SOLENOID
-
-    #endif // EXTRUDERS > 1
-    SERIAL_ECHO_START;
-    SERIAL_ECHO(MSG_ACTIVE_EXTRUDER);
-    SERIAL_PROTOCOLLN((int)active_extruder);
-  }
-}
+} //gcode_T()
 
 /**
  * Process a single command and dispatch it to its handler
@@ -5669,7 +5821,7 @@ void process_next_command() {
 
   // Sanitize the current command:
   //  - Skip leading spaces
-  //  - Bypass N[0-9][0-9]*[ ]*
+  //  - Bypass N[-0-9][0-9]*[ ]*
   //  - Overwrite * with nul to mark the end
   while (*current_command == ' ') ++current_command;
   if (*current_command == 'N' && ((current_command[1] >= '0' && current_command[1] <= '9') || current_command[1] == '-')) {
@@ -5694,7 +5846,7 @@ void process_next_command() {
   // Args pointer optimizes code_seen, especially those taking XYZEF
   // This wastes a little cpu on commands that expect no arguments.
   current_command_args = current_command;
-  while (*current_command_args && *current_command_args != ' ') ++current_command_args;
+  while (*current_command_args >= '0' && *current_command_args <= '9') ++current_command_args;
   while (*current_command_args == ' ') ++current_command_args;
 
   // Interpret the code int
@@ -5967,6 +6119,20 @@ void process_next_command() {
           break;
 
       #endif //BLINKM
+
+      #if ENABLED(MIXING_EXTRUDER_FEATURE)
+        case 163: // M163 S<int> P<float> set weight for a mixing extruder
+          gcode_M163();
+          break;
+        #if MIXING_VIRTUAL_TOOLS > 1
+          case 164: // M164 S<int> save current mix as a virtual extruder
+            gcode_M164();
+            break;
+        #endif
+        case 165: // M165 [ABCDHI]<float> set multiple mix weights
+          gcode_M165();
+          break;
+      #endif
 
       case 200: // M200 D<millimeters> set filament diameter and set E axis units to cubic millimeters (use S0 to set back to millimeters).
         gcode_M200();

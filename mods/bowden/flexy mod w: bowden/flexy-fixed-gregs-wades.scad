@@ -36,8 +36,8 @@
 render_bracket = false; //extra mounting bracket
 
 //pushfit connector
-bowden_pushfit_d = 9.6; //diameter
-bowden_pushfit_thread = 6.0; //thread length
+bowden_pushfit_d = 8; //diameter
+bowden_pushfit_thread = 4.0; //thread length
 
 include<configuration.scad>
 include<functions.scad>
@@ -92,10 +92,10 @@ render_washer=4;
 render_alltogether=8;	// Show parts assembled, colored; do not use with other "render_*"
 
 // Choose which parts to render here or in makefile
-//make_parts = render_extruder + render_guidler + render_washer ;
+make_parts = render_extruder + render_guidler + render_washer ;
 // make_parts = render_extruder + render_washer ;
 // make_parts = render_guidler ;
-make_parts = render_alltogether ;
+//make_parts = render_alltogether ;
 
 if (in_mask (make_parts,render_extruder))
 	wade(hotend_mount=default_extruder_mount,mounting_holes=default_mounting_holes);

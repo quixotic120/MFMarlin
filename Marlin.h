@@ -121,7 +121,7 @@ void manage_inactivity(bool ignore_stepper_queue = false);
   #define  enable_x() X_ENABLE_WRITE( X_ENABLE_ON)
   #define disable_x() { X_ENABLE_WRITE(!X_ENABLE_ON); axis_known_position[X_AXIS] = false; }
 #else
-  #define enable_x() ;
+  #define  enable_x() ;
   #define disable_x() ;
 #endif
 
@@ -134,7 +134,7 @@ void manage_inactivity(bool ignore_stepper_queue = false);
     #define disable_y() { Y_ENABLE_WRITE(!Y_ENABLE_ON); axis_known_position[Y_AXIS] = false; }
   #endif
 #else
-  #define enable_y() ;
+  #define  enable_y() ;
   #define disable_y() ;
 #endif
 
@@ -147,41 +147,67 @@ void manage_inactivity(bool ignore_stepper_queue = false);
     #define disable_z() { Z_ENABLE_WRITE(!Z_ENABLE_ON); axis_known_position[Z_AXIS] = false; }
   #endif
 #else
-  #define enable_z() ;
+  #define  enable_z() ;
   #define disable_z() ;
 #endif
 
-#if HAS_E0_ENABLE
-  #define enable_e0()  E0_ENABLE_WRITE( E_ENABLE_ON)
-  #define disable_e0() E0_ENABLE_WRITE(!E_ENABLE_ON)
-#else
-  #define enable_e0()  /* nothing */
-  #define disable_e0() /* nothing */
-#endif
+#if ENABLED(MIXING_EXTRUDER_FEATURE)
 
-#if (EXTRUDERS > 1) && HAS_E1_ENABLE
-  #define enable_e1()  E1_ENABLE_WRITE( E_ENABLE_ON)
-  #define disable_e1() E1_ENABLE_WRITE(!E_ENABLE_ON)
-#else
-  #define enable_e1()  /* nothing */
-  #define disable_e1() /* nothing */
-#endif
+  #if MIXING_STEPPERS > 3
+    #define  enable_e0() { E0_ENABLE_WRITE( E_ENABLE_ON); E1_ENABLE_WRITE( E_ENABLE_ON); E2_ENABLE_WRITE( E_ENABLE_ON); E3_ENABLE_WRITE( E_ENABLE_ON); }
+    #define disable_e0() { E0_ENABLE_WRITE(!E_ENABLE_ON); E1_ENABLE_WRITE(!E_ENABLE_ON); E2_ENABLE_WRITE(!E_ENABLE_ON); E3_ENABLE_WRITE(!E_ENABLE_ON); }
+  #elif MIXING_STEPPERS > 2
+    #define  enable_e0() { E0_ENABLE_WRITE( E_ENABLE_ON); E1_ENABLE_WRITE( E_ENABLE_ON); E2_ENABLE_WRITE( E_ENABLE_ON); }
+    #define disable_e0() { E0_ENABLE_WRITE(!E_ENABLE_ON); E1_ENABLE_WRITE(!E_ENABLE_ON); E2_ENABLE_WRITE(!E_ENABLE_ON); }
+  #else
+    #define  enable_e0() { E0_ENABLE_WRITE( E_ENABLE_ON); E1_ENABLE_WRITE( E_ENABLE_ON); }
+    #define disable_e0() { E0_ENABLE_WRITE(!E_ENABLE_ON); E1_ENABLE_WRITE(!E_ENABLE_ON); }
+  #endif
 
-#if (EXTRUDERS > 2) && HAS_E2_ENABLE
-  #define enable_e2()  E2_ENABLE_WRITE( E_ENABLE_ON)
-  #define disable_e2() E2_ENABLE_WRITE(!E_ENABLE_ON)
-#else
-  #define enable_e2()  /* nothing */
-  #define disable_e2() /* nothing */
-#endif
+  #define  enable_e1() ;
+  #define disable_e1() ;
+  #define  enable_e2() ;
+  #define disable_e2() ;
+  #define  enable_e3() ;
+  #define disable_e3() ;
+  #define  enable_e4() ;
+  #define disable_e4() ;
 
-#if (EXTRUDERS > 3) && HAS_E3_ENABLE
-  #define enable_e3()  E3_ENABLE_WRITE( E_ENABLE_ON)
-  #define disable_e3() E3_ENABLE_WRITE(!E_ENABLE_ON)
-#else
-  #define enable_e3()  /* nothing */
-  #define disable_e3() /* nothing */
-#endif
+#else // !MIXING_EXTRUDER_FEATURE
+
+  #if HAS_E0_ENABLE
+    #define  enable_e0() E0_ENABLE_WRITE( E_ENABLE_ON)
+    #define disable_e0() E0_ENABLE_WRITE(!E_ENABLE_ON)
+  #else
+    #define  enable_e0() ;
+    #define disable_e0() ;
+  #endif
+
+  #if (EXTRUDERS > 1) && HAS_E1_ENABLE
+    #define enable_e1()  E1_ENABLE_WRITE( E_ENABLE_ON)
+    #define disable_e1() E1_ENABLE_WRITE(!E_ENABLE_ON)
+  #else
+    #define  enable_e1() ;
+    #define disable_e1() ;
+  #endif
+
+  #if (EXTRUDERS > 2) && HAS_E2_ENABLE
+    #define enable_e2()  E2_ENABLE_WRITE( E_ENABLE_ON)
+    #define disable_e2() E2_ENABLE_WRITE(!E_ENABLE_ON)
+  #else
+    #define  enable_e2() ;
+    #define disable_e2() ;
+  #endif
+
+  #if (EXTRUDERS > 3) && HAS_E3_ENABLE
+    #define enable_e3()  E3_ENABLE_WRITE( E_ENABLE_ON)
+    #define disable_e3() E3_ENABLE_WRITE(!E_ENABLE_ON)
+  #else
+    #define  enable_e3() ;
+    #define disable_e3() ;
+  #endif
+
+#endif // !MIXING_EXTRUDER_FEATURE
 
 /**
  * The axis order in all axis related arrays is X, Y, Z, E
@@ -349,6 +375,14 @@ extern uint8_t active_extruder;
 #if ENABLED(DIGIPOT_I2C)
   extern void digipot_i2c_set_current(int channel, float current);
   extern void digipot_i2c_init();
+#endif
+
+#if HAS_TEMP_0 || HAS_TEMP_BED || ENABLED(HEATER_0_USES_MAX6675)
+  void print_heaterstates();
+#endif
+
+#if ENABLED(MIXING_EXTRUDER_FEATURE)
+  extern float mixing_factor[MIXING_STEPPERS];
 #endif
 
 extern void calculate_volumetric_multipliers();
