@@ -3,7 +3,7 @@ Marlin 1.1.0 RC3 for Makerfarm Pegasus
 
 **in this configuration software endstops are turned off; as a result you will be able to crash the head very easily if you manually move the print head or incorrectly set offsets. If you do not want it to act this way edit line 404 of configuration.h to be true instead of false**
 
-newest changes: speed has been changed because I changed my stepper drivers. I blew out the stepsticks that came with it because I am dumb and replaced with DRV8825 - trying out 1/32nd stepping for now
+newest changes: speed has been changed because I changed my stepper drivers. I blew out the stepsticks that came with it because I am dumb and replaced with DRV8825 - trying out 1/32nd stepping for now. Added in second extruder but recently picked up a diamond hotend - added experimental support for CMY color mixing. Untested.
 
 added a ferrite core to the servo signal line and powered with a 7805 rather than using the arduino. Jitter is improved quite a bit but still present unfortunately. Considering building a [noise trap](http://www.sentex.ca/~mec1995/gadgets/noiserx.htm) because I found a hex-schmitt IC in my parts bin; also might add caps to the power and signal lines (see arduino_servo_filters.jpg)
 
@@ -12,8 +12,6 @@ https://github.com/MarlinFirmware/Marlin - I didn't fork because I'm dumb but al
 This is typically going to be configured for my setup (described below). I'll try to maintain it for as long as possible but no guarantees on that front. I would suggest that if you download this you read over configuration.h at least once - you'll likely at least need to change the bed size and would probably benefit from adding your own PID tunings. If you are using auto bed level you will need to enter the measurements for your machine and if not you should disable it and turn software endstops on.
 
 I have a 10" Pegasus dual extruder with E3Dv6 extruders, graphical LCD, a servo for auto bed leveling (abl), 3mm Borosilicate over bed, SSR on bed for PID control, new bed clips, and some other mods that don't impact the firmware (octopi, cooling for Ramps, lighting, etc). Working fine for me however I do not take any responsibility for you destroying your machine or whatever and no warranty is expressed or implied. Also - I tend to err on the side of slower printing so you may need to play with that a bit for your preferences.
-
-see /mods for images and a brief description of mods I've done as well as some troubleshooting for problems that were a pain to solve and some ideas for new mods. 
 
 my current slicer settings posted in /slicer as an fff file for simplify3d. If you don't use S3D you can just open it on github; it's basically an XML file. I typically end up messing with the standard stuff, infill/raft/layer height/temperature/etc but the rest is mostly locked in at this point.
 
@@ -87,10 +85,4 @@ bugs found:
 random reboot - appears to be a function of using too much at once (e.g. ramping heat WAY up on both extruders and bed while having the carriage move around) and is most likely an issue with my power supply, but still trying to see if I can reproduce it. 
 SD sometimes not detected after reboot - every time this has happened reseating the card has fixed the issue. again, trying to reproduce consistently. 
 
-to do - enable second extruder when new thermistor comes; play with extruder offsets in firmware to replace M218 commands in slicer starting gcode. 
-
 msg me if you find a bug or have questions although I do not guarantee I can help or will respond in a timely manner. 
-
-
-
-
