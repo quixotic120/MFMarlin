@@ -1,1 +1,0 @@
-repetier - untested as of now. ordered a diamond hotend, may transition to this once that comes in
